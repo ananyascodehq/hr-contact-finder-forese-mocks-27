@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HR phone finder</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f6f4; --panel: #ffffff; --text: #1d1f21; --muted: #666b70; --line: #dfdfda;
+    --accent: #1f5fbf; --accent-text: #ffffff; --good: #1a7a43; --warn: #a15c00; --warn-bg: #fdf3e1;
+    --bad: #b3261e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #17181a; --panel: #212326; --text: #e9e9e6; --muted: #a0a4a8; --line: #36393d;
+      --accent: #7aa9ee; --accent-text: #10151c; --good: #62c48d; --warn: #e5b05c; --warn-bg: #3a2e1a;
+      --bad: #f08a82;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 0; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0; }
+  #status { font-weight: 600; }
+  #status.running { color: var(--accent); }
+  #status.done { color: var(--good); }
+  #status.stopped { color: var(--warn); }
+  #status.failed { color: var(--bad); }
+  main {
+    display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px;
+    padding: 16px 20px 24px; align-items: start;
+  }
+  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .column { display: grid; gap: 16px; min-width: 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
+  h2 { font-size: 14px; margin: 0 0 10px; }
+  label { display: block; font-weight: 600; margin: 12px 0 4px; }
+  label:first-of-type { margin-top: 0; }
+  .hint { color: var(--muted); font-size: 12px; font-weight: 400; }
+  input, textarea {
+    width: 100%; padding: 7px 9px; font: inherit; color: inherit; background: transparent;
+    border: 1px solid var(--line); border-radius: 6px;
+  }
+  textarea { resize: vertical; }
+  button, .button {
+    font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 6px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: inherit; text-decoration: none;
+    display: inline-block;
+  }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  button:disabled { opacity: .55; cursor: default; }
+  .buttons { display: flex; gap: 8px; margin-top: 14px; }
+  #form-error { color: var(--bad); margin: 10px 0 0; }
+  #form-error:empty { display: none; }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+  .stat b { display: block; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .stat span { color: var(--muted); font-size: 12px; }
+  #company-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto; }
+  #company-list li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; }
+  .state { color: var(--muted); white-space: nowrap; }
+  .state.running { color: var(--accent); font-weight: 600; }
+  .state.has-numbers { color: var(--good); font-weight: 600; }
+  .company-side { display: flex; gap: 10px; align-items: baseline; }
+  button.again {
+    border: 0; padding: 0; font-size: 12px; font-weight: 400; color: var(--accent);
+    text-decoration: underline; white-space: nowrap;
+  }
+  .section-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .section-head h2 { margin: 0; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
+  th, td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .phone { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+  .sources { text-align: right; padding-right: 18px; font-variant-numeric: tabular-nums; }
+  th.sources { text-align: right; }
+  .flag { color: var(--warn); }
+  .no-name { color: var(--muted); }
+  .date { white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .empty { color: var(--muted); padding: 16px 0; margin: 0; }
+  a { color: var(--accent); }
+  #log {
+    height: 320px; overflow: auto; font-size: 13px;
+    border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
+  }
+  .line { display: flex; gap: 10px; padding: 1px 0; }
+  .line time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+  .line .message { min-width: 0; overflow-wrap: anywhere; }
+  .line.heading { font-weight: 600; margin-top: 8px; }
+  .line.muted .message { color: var(--muted); }
+  .line.found .message { color: var(--good); font-weight: 600; }
+  .line.warn .message { color: var(--warn); }
+</style>
+</head>
+<body>
+<header>
+  <h1>HR phone finder</h1>
+  <span id="status">Ready</span>
+</header>
+<main>
+  <div class="column">
+    <section>
+      <form id="form">
+        <label for="companies">Companies <span class="hint">one per line; use | for other names</span></label>
+        <textarea id="companies" rows="8" spellcheck="false"></textarea>
+        <label for="city">City</label>
+        <input id="city" value="Chennai">
+        <label for="key">Serper API key <span class="hint" id="key-hint">not saved to disk</span></label>
+        <input id="key" type="password" autocomplete="off">
+        <label for="dnc">Numbers to leave out <span class="hint">one per line</span></label>
+        <textarea id="dnc" rows="3" spellcheck="false"></textarea>
+        <div class="buttons">
+          <button type="submit" class="primary" id="start">Start search</button>
+          <button type="button" id="stop" disabled>Stop</button>
+        </div>
+        <p id="form-error" role="alert"></p>
+      </form>
+    </section>
+    <section>
+      <h2>Companies</h2>
+      <p class="empty" id="company-empty">Companies appear here when a search starts.</p>
+      <ul id="company-list"></ul>
+    </section>
+  </div>
+  <div class="column">
+    <section class="stats">
+      <div class="stat"><b id="stat-companies">0 / 0</b><span>companies searched</span></div>
+      <div class="stat"><b id="stat-pages">0</b><span>pages read</span></div>
+      <div class="stat"><b id="stat-searches">0</b><span>searches used this run</span></div>
+      <div class="stat"><b id="stat-numbers">0</b><span>HR numbers saved</span></div>
+    </section>
+    <section>
+      <div class="section-head">
+        <h2>Results</h2>
+        <a class="button" id="download" href="/results.csv" hidden>Download CSV</a>
+      </div>
+      <p class="empty" id="results-empty">No numbers saved yet.</p>
+      <div class="table-wrap" id="table-wrap" hidden>
+        <table>
+          <thead><tr>
+            <th>Company</th><th>HR name</th><th>Phone</th><th>Type</th><th>Page date</th><th class="sources">Sources</th>
+            <th>Check first</th><th>Source</th>
+          </tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+    </section>
+    <section>
+      <h2>Activity</h2>
+      <div id="log" aria-live="polite"></div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const STATUS_TEXT = { idle: "Ready", running: "Searching…", done: "Finished", stopped: "Stopped", failed: "Failed" };
+let seenEvents = 0;
+let lastRows = "";
+let timer = null;
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function sourceLink(url) {
+  const link = el("a", "", new URL(url).hostname.replace(/^www\./, ""));
+  link.href = url;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  return link;
+}
+
+function renderLog(events) {
+  const log = $("log");
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  for (const event of events) {
+    const line = el("div", "line " + event.level);
+    line.append(el("time", "", event.time));
+    const message = el("div", "message", event.text);
+    if (event.url) {
+      message.append(": ");
+      message.append(sourceLink(event.url));
+    }
+    line.append(message);
+    log.append(line);
+  }
+  if (atBottom) log.scrollTop = log.scrollHeight;
+}
+
+function renderCompanies(companies, running) {
+  const list = $("company-list");
+  list.replaceChildren();
+  $("company-empty").hidden = companies.length > 0;
+  for (const company of companies) {
+    const item = el("li");
+    item.append(el("span", "", company.name));
+    let text = running ? "Waiting" : "Not searched";
+    let cls = "state";
+    if (company.state === "running") {
+      text = "Searching…";
+      cls += " running";
+    } else if (company.found) {
+      text = company.found + (company.found === 1 ? " number" : " numbers");
+      cls += " has-numbers";
+    } else if (company.state === "done" || company.state === "skipped") {
+      text = "None found";
+    } else if (company.state === "stopped") {
+      text = "Stopped";
+    } else if (company.state === "incomplete") {
+      text = "Search failed";
+    }
+    const side = el("span", "company-side");
+    const status = el("span", cls, text);
+    if (company.searched_on) status.title = "Last searched " + company.searched_on;
+    side.append(status);
+    if (!running && company.state !== "waiting") {
+      const again = el("button", "again", "Search again");
+      again.type = "button";
+      again.addEventListener("click", () => startRun({ only: company.name }));
+      side.append(again);
+    }
+    item.append(side);
+    list.append(item);
+  }
+}
+
+function renderRows(rows) {
+  const signature = JSON.stringify(rows);
+  if (signature === lastRows) return;
+  lastRows = signature;
+  const body = $("rows");
+  body.replaceChildren();
+  for (const row of rows) {
+    const tr = el("tr");
+    tr.append(el("td", "", row.company));
+    tr.append(el("td", row.hr_name ? "" : "no-name", row.hr_name || "Not listed"));
+    tr.append(el("td", "phone", row.phone));
+    tr.append(el("td", "", row.line_type));
+    tr.append(el("td", row.page_date ? "date" : "date no-name", row.page_date || "Unknown"));
+    tr.append(el("td", "sources", row.sources_found));
+    tr.append(el("td", "flag", row.check_first));
+    const source = el("td");
+    source.append(sourceLink(row.source_url));
+    tr.append(source);
+    body.append(tr);
+  }
+  $("results-empty").hidden = rows.length > 0;
+  $("table-wrap").hidden = rows.length === 0;
+  $("download").hidden = rows.length === 0;
+}
+
+function renderState(state) {
+  const running = state.status === "running";
+  renderLog(state.events);
+  seenEvents = state.event_count;
+  renderCompanies(state.companies, running);
+  renderRows(state.rows);
+
+  const status = $("status");
+  status.textContent = state.stopping ? "Stopping…" : STATUS_TEXT[state.status];
+  status.className = state.status;
+  $("start").disabled = running;
+  $("stop").disabled = !running || state.stopping;
+
+  const started = state.companies.filter(c => c.state !== "waiting").length;
+  $("stat-searches").textContent = state.searches;
+  $("stat-companies").textContent = started + " / " + state.companies.length;
+  $("stat-pages").textContent = state.pages;
+  $("stat-numbers").textContent = state.rows.length;
+  return running;
+}
+
+async function poll() {
+  clearTimeout(timer);
+  let running = true;
+  try {
+    const response = await fetch("/api/state?since=" + seenEvents);
+    running = renderState(await response.json());
+    $("form-error").textContent = "";
+  } catch {
+    $("form-error").textContent = "Lost contact with the finder. Is webapp.py still running?";
+  }
+  if (running) timer = setTimeout(poll, 1000);
+}
+
+async function post(path, body) {
+  return fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+async function startRun(extra) {
+  $("form-error").textContent = "";
+  $("start").disabled = true;
+  const response = await post("/api/start", {
+    companies: $("companies").value,
+    city: $("city").value,
+    api_key: $("key").value,
+    do_not_call: $("dnc").value,
+    ...extra,
+  });
+  if (!response.ok) {
+    $("form-error").textContent = (await response.json()).error;
+    $("start").disabled = false;
+    return;
+  }
+  if ($("key").value) $("key-hint").textContent = "saved until you close the finder";
+  $("key").value = "";
+  seenEvents = 0;
+  lastRows = "";
+  $("log").replaceChildren();
+  poll();
+}
+
+$("form").addEventListener("submit", event => {
+  event.preventDefault();
+  startRun({});
+});
+
+$("stop").addEventListener("click", async () => {
+  $("stop").disabled = true;
+  await post("/api/stop", {});
+  poll();
+});
+
+(async () => {
+  const config = await (await fetch("/api/config")).json();
+  $("companies").value = config.companies;
+  $("dnc").value = config.do_not_call;
+  if (config.has_key) {
+    $("key-hint").textContent = "already set; leave blank to keep it";
+  }
+  poll();
+})();
+</script>
+</body>
+</html>

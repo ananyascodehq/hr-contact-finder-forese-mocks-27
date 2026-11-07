@@ -1,0 +1,8 @@
+# One company per line. Replace these examples with your own targets.
+# Use | to add other names the company goes by; the first name appears in the results.
+Zoho | Zoho Corporation
+TCS | Tata Consultancy Services
+Freshworks
+Amazon
+DataBricks
+HCLTech | HCL | HCL Tech

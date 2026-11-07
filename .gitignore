@@ -1,0 +1,9 @@
+# Real people's contact details: never push these to GitHub
+finder_data.json
+finder_data.json.*
+hr_contacts.csv
+do_not_call.txt
+
+.venv/
+__pycache__/
+.pytest_cache/
