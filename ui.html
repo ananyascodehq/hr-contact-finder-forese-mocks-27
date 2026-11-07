@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HR Contacts</title>
+<link rel="icon" href="data:,">
 <style>
   :root {
     color-scheme: light;
@@ -75,7 +76,7 @@
   .company { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
   .company-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 20px; border-bottom: 1px solid var(--line); }
   .company-head h2 { margin: 0; font-size: 18px; font-weight: 650; }
-  .company-head h2 small { font-size: 14px; font-weight: 400; color: var(--soft); margin-left: 8px; }
+  .company-head h2 small { font-size: 14px; font-weight: 400; color: var(--soft); margin-left: 8px; white-space: nowrap; }
 
   .contact { display: flex; justify-content: space-between; gap: 20px; padding: 15px 20px; flex-wrap: wrap; }
   .contact + .contact { border-top: 1px solid var(--line); }
@@ -91,6 +92,8 @@
   .phone { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .copy { min-height: 36px; min-width: 72px; padding: 0 12px; font-size: 14px; }
   .copy.done { background: var(--brand-tint); border-color: var(--brand); color: var(--brand-dark); }
+
+  .copy.manual { background: var(--amber-tint); border-color: var(--amber); color: var(--amber); }
 
   .no-match { text-align: center; color: var(--soft); padding: 40px 0; margin: 0; }
 
@@ -189,6 +192,7 @@
     </div>
   </div>
 
+  <p class="no-match" id="looking" hidden>Looking for numbers. They'll appear here as they're found.</p>
   <div id="contacts"></div>
   <p class="no-match" id="no-match" hidden>No contacts match.</p>
 
@@ -217,7 +221,7 @@
       <div class="field">
         <label for="companies">Companies</label>
         <span class="hint">One per line. Add other names with |, like TCS | Tata Consultancy Services</span>
-        <textarea id="companies" rows="9" spellcheck="false"></textarea>
+        <textarea id="companies" rows="9" spellcheck="false" autofocus></textarea>
       </div>
       <div class="field">
         <label for="city">City</label>
@@ -266,16 +270,22 @@ function el(tag, className, text) {
 }
 
 function friendlyDate(iso) {
-  const [year, month, day] = iso.split("-").map(Number);
-  return day + " " + MONTHS[month - 1] + " " + year;
-}
-
-function hostOf(url) {
-  return new URL(url).hostname.replace(/^www\./, "");
+  const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!parts || !MONTHS[Number(parts[2]) - 1]) return iso;
+  return Number(parts[3]) + " " + MONTHS[Number(parts[2]) - 1] + " " + parts[1];
 }
 
 function sourceLink(url) {
-  const link = el("a", "", hostOf(url));
+  // A strange address from a web page should show as text, not break the whole list.
+  let host;
+  try {
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol)) throw new Error("not a web address");
+    host = parsed.hostname.replace(/^www\./, "");
+  } catch {
+    return el("span", "", url);
+  }
+  const link = el("a", "", host);
   link.href = url;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
@@ -323,6 +333,14 @@ async function copyText(text) {
   }
 }
 
+function selectText(node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
 function contactRow(row) {
   const item = el("div", "contact");
   const who = el("div", "who");
@@ -345,15 +363,17 @@ function contactRow(row) {
   item.append(who);
 
   const call = el("div", "call");
-  call.append(el("span", "phone", row.phone));
+  const number = el("span", "phone", row.phone);
+  call.append(number);
   const copy = el("button", "btn copy", "Copy");
   copy.type = "button";
   copy.setAttribute("aria-label", "Copy " + row.phone);
   copy.addEventListener("click", async () => {
     const copied = await copyText(row.phone.replace(/\s/g, ""));
-    copy.textContent = copied ? "Copied" : "Failed";
-    if (copied) copy.classList.add("done");
-    setTimeout(() => { copy.textContent = "Copy"; copy.classList.remove("done"); }, 1500);
+    if (!copied) selectText(number);  // the browser refused, so make copying by hand easy
+    copy.textContent = copied ? "Copied" : "Press Ctrl+C";
+    copy.classList.add(copied ? "done" : "manual");
+    setTimeout(() => { copy.textContent = "Copy"; copy.classList.remove("done", "manual"); }, copied ? 1500 : 3000);
   });
   call.append(copy);
   item.append(call);
@@ -426,6 +446,8 @@ function explainStop() {
   const warning = [...allEvents].reverse().find(e => e.level === "warn" && !e.text.startsWith("Couldn't update"));
   const text = warning ? warning.text : "";
   if (text.includes("stopped by you")) return ["warn", "Search stopped. Numbers found so far are saved."];
+  if (text.includes("keep failing")) return ["bad", "Searches keep failing. Check your internet connection, then press New search to continue."];
+  if (/credit/i.test(text)) return ["bad", "Serper says you're out of credits. Numbers found so far are saved."];
   if (/\b(401|403)\b/.test(text)) return ["bad", "Serper didn't accept your API key. Check it under New search."];
   if (/\b(402|429)\b/.test(text)) return ["bad", "Serper is out of credits or asking you to slow down. Numbers found so far are saved."];
   return ["bad", text || "The search stopped unexpectedly. Numbers found so far are saved."];
@@ -453,11 +475,17 @@ function renderBanner(state, running) {
     return;
   }
   if (state.status === "idle") {
-    banner.hidden = true;
+    banner.hidden = !state.notice;
+    if (state.notice) {
+      banner.className = "warn";
+      $("banner-text").textContent = state.notice;
+    }
     return;
   }
   banner.hidden = false;
-  const saveProblem = allEvents.find(e => e.text.startsWith("Couldn't update") || e.text.startsWith("Couldn't save"));
+  const saveProblem = state.notice
+    ? { text: state.notice }
+    : allEvents.find(e => e.text.startsWith("Couldn't update") || e.text.startsWith("Couldn't save"));
   if (state.status === "stopped" || state.status === "failed") {
     const [level, text] = explainStop();
     banner.className = level;
@@ -484,6 +512,7 @@ function render(state) {
   const companyCount = new Set(state.rows.map(r => r.company)).size;
 
   $("hero").hidden = hasRows || state.status !== "idle";
+  $("looking").hidden = hasRows || !running;
   $("toolbar").hidden = !hasRows;
   $("download").hidden = !hasRows;
   $("activity").hidden = allEvents.length === 0;
@@ -505,25 +534,44 @@ function render(state) {
   return running;
 }
 
+function showLostContact() {
+  const banner = $("banner");
+  banner.hidden = false;
+  banner.className = "bad";
+  $("banner-text").textContent = "Lost contact with the finder. Is webapp.py still running? Retrying…";
+  $("banner-detail").textContent = "";
+  $("track").hidden = true;
+  $("stop").hidden = true;
+}
+
+function clearLog() {
+  allEvents = [];
+  seenEvents = 0;
+  $("log").replaceChildren();
+}
+
 async function poll() {
   clearTimeout(timer);
-  let running = true;
+  let state;
   try {
     const response = await fetch("/api/state?since=" + seenEvents);
-    const state = await response.json();
-    allEvents.push(...state.events);
-    renderLog(state.events);
-    seenEvents = state.event_count;
-    latest = state;
-    running = render(state);
+    if (!response.ok) throw new Error("status " + response.status);
+    state = await response.json();
   } catch {
-    const banner = $("banner");
-    banner.hidden = false;
-    banner.className = "bad";
-    $("banner-text").textContent = "Lost contact with the finder. Is webapp.py still running?";
-    $("banner-detail").textContent = "";
+    showLostContact();
+    timer = setTimeout(poll, 3000);  // keeps trying, and recovers by itself on restart
+    return;
   }
-  if (running) timer = setTimeout(poll, 1000);
+  if (state.event_count < seenEvents) {  // the finder restarted, so its log started over
+    clearLog();
+    timer = setTimeout(poll, 0);
+    return;
+  }
+  allEvents.push(...state.events);
+  renderLog(state.events);
+  seenEvents = state.event_count;
+  latest = state;
+  if (render(state)) timer = setTimeout(poll, 1000);
 }
 
 async function post(path, body) {
@@ -534,27 +582,47 @@ async function post(path, body) {
   });
 }
 
+async function errorFrom(response) {
+  try {
+    const body = await response.json();
+    if (body.error) return body.error;
+  } catch {
+    // The reply wasn't JSON, so fall through to the general message.
+  }
+  return "Something went wrong in the finder. Please try again.";
+}
+
+function showFormError(message) {
+  $("form-error").textContent = message;
+  if (!$("drawer").open) openDrawer();
+}
+
 async function startRun(extra) {
   $("form-error").textContent = "";
-  const response = await post("/api/start", {
-    companies: $("companies").value,
-    city: $("city").value,
-    api_key: $("key").value,
-    do_not_call: $("dnc").value,
-    ...extra,
-  });
-  if (!response.ok) {
-    $("form-error").textContent = (await response.json()).error;
-    if (!$("drawer").open) openDrawer();
+  $("start").disabled = true;  // stops a double click starting two searches
+  try {
+    const response = await post("/api/start", {
+      companies: $("companies").value,
+      city: $("city").value,
+      api_key: $("key").value,
+      do_not_call: $("dnc").value,
+      ...extra,
+    });
+    if (!response.ok) {
+      showFormError(await errorFrom(response));
+      $("start").disabled = false;
+      return;
+    }
+  } catch {
+    showFormError("Couldn't reach the finder. Check that webapp.py is still running.");
+    $("start").disabled = false;
     return;
   }
   if ($("key").value) showKeySaved();
   $("key").value = "";
-  $("drawer").close();
-  allEvents = [];
-  seenEvents = 0;
+  if ($("drawer").open) $("drawer").close();
+  clearLog();
   lastRender = "";
-  $("log").replaceChildren();
   poll();
 }
 
@@ -583,7 +651,11 @@ $("form").addEventListener("submit", event => {
 });
 $("stop").addEventListener("click", async () => {
   $("stop").disabled = true;
-  await post("/api/stop", {});
+  try {
+    await post("/api/stop", {});
+  } catch {
+    showLostContact();
+  }
   poll();
 });
 $("filter-text").addEventListener("input", () => { if (latest) render(latest); });
@@ -597,15 +669,24 @@ for (const button of document.querySelectorAll(".tabs button")) {
   });
 }
 
-(async () => {
-  const config = await (await fetch("/api/config")).json();
-  $("companies").value = config.companies;
-  $("dnc").value = config.do_not_call;
-  searchesPerCompany = config.searches_per_company;
-  if (config.has_key) showKeySaved();
-  if (config.do_not_call.trim()) $("dnc-section").open = true;
-  poll();
-})();
+async function loadConfig() {
+  try {
+    const response = await fetch("/api/config");
+    if (!response.ok) throw new Error("status " + response.status);
+    const config = await response.json();
+    $("companies").value = config.companies;
+    $("dnc").value = config.do_not_call;
+    searchesPerCompany = config.searches_per_company;
+    if (config.has_key) showKeySaved();
+    if (config.do_not_call.trim()) $("dnc-section").open = true;
+    poll();
+  } catch {
+    showLostContact();
+    setTimeout(loadConfig, 3000);
+  }
+}
+
+loadConfig();
 </script>
 </body>
 </html>
