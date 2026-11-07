@@ -221,6 +221,7 @@ def config():
         companies=read_text(COMPANIES_FILE),
         do_not_call=read_text(DO_NOT_CALL_FILE),
         has_key=bool(api_key),
+        searches_per_company=len(finder.SEARCH_PHRASES),
     )
 
 

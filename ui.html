@@ -3,165 +3,260 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HR phone finder</title>
+<title>HR Contacts</title>
 <style>
   :root {
-    color-scheme: light dark;
-    --bg: #f6f6f4; --panel: #ffffff; --text: #1d1f21; --muted: #666b70; --line: #dfdfda;
-    --accent: #1f5fbf; --accent-text: #ffffff; --good: #1a7a43; --warn: #a15c00; --warn-bg: #fdf3e1;
-    --bad: #b3261e;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #17181a; --panel: #212326; --text: #e9e9e6; --muted: #a0a4a8; --line: #36393d;
-      --accent: #7aa9ee; --accent-text: #10151c; --good: #62c48d; --warn: #e5b05c; --warn-bg: #3a2e1a;
-      --bad: #f08a82;
-    }
+    color-scheme: light;
+    --page: #f6f5f1; --card: #ffffff; --ink: #1b1f1d; --soft: #59615d; --line: #e3e1d9;
+    --brand: #0e6655; --brand-dark: #0a4f42; --brand-tint: #e4f1ed;
+    --amber: #875500; --amber-tint: #fcf2dc; --red: #a8261d; --red-tint: #fbe9e7;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
+  html { background: var(--page); }
   body {
-    margin: 0; background: var(--bg); color: var(--text);
-    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    margin: 0; color: var(--ink);
+    font: 16px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
   }
-  header { display: flex; align-items: baseline; gap: 12px; padding: 16px 20px 0; flex-wrap: wrap; }
-  h1 { font-size: 20px; margin: 0; }
-  #status { font-weight: 600; }
-  #status.running { color: var(--accent); }
-  #status.done { color: var(--good); }
-  #status.stopped { color: var(--warn); }
-  #status.failed { color: var(--bad); }
-  main {
-    display: grid; grid-template-columns: 320px minmax(0, 1fr); gap: 16px;
-    padding: 16px 20px 24px; align-items: start;
+  a { color: var(--brand); }
+  button, input, textarea { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid color-mix(in srgb, var(--brand) 45%, transparent); outline-offset: 2px; }
+
+  .wrap { max-width: 980px; margin: 0 auto; padding: 0 24px; }
+
+  header { background: var(--card); border-bottom: 1px solid var(--line); }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; padding-block: 16px; }
+  .brand h1 { margin: 0; font-size: 22px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+  .brand p { margin: 2px 0 0; color: var(--soft); font-size: 14px; }
+  .top-actions { display: flex; gap: 10px; }
+
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; min-height: 40px; padding: 0 16px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--card); font-weight: 600; font-size: 15px;
+    color: var(--ink); text-decoration: none; cursor: pointer; white-space: nowrap;
   }
-  @media (max-width: 860px) { main { grid-template-columns: minmax(0, 1fr); } }
-  .column { display: grid; gap: 16px; min-width: 0; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px; min-width: 0; }
-  h2 { font-size: 14px; margin: 0 0 10px; }
-  label { display: block; font-weight: 600; margin: 12px 0 4px; }
-  label:first-of-type { margin-top: 0; }
-  .hint { color: var(--muted); font-size: 12px; font-weight: 400; }
-  input, textarea {
-    width: 100%; padding: 7px 9px; font: inherit; color: inherit; background: transparent;
-    border: 1px solid var(--line); border-radius: 6px;
+  .btn:hover { background: #f1f0ea; }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: #fff; }
+  .btn.primary:hover { background: var(--brand-dark); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .link-btn {
+    border: 0; background: none; padding: 4px 0; color: var(--brand); cursor: pointer;
+    font-size: 14px; font-weight: 600; white-space: nowrap;
   }
-  textarea { resize: vertical; }
-  button, .button {
-    font: inherit; font-weight: 600; padding: 8px 14px; border-radius: 6px; cursor: pointer;
-    border: 1px solid var(--line); background: transparent; color: inherit; text-decoration: none;
-    display: inline-block;
+  .link-btn:hover { text-decoration: underline; }
+
+  #banner { border-bottom: 1px solid var(--line); background: var(--brand-tint); }
+  #banner.warn { background: var(--amber-tint); }
+  #banner.bad { background: var(--red-tint); }
+  .banner-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 11px; }
+  #banner-text { font-weight: 600; font-size: 15px; }
+  #banner-detail { color: var(--soft); font-weight: 400; font-size: 14px; margin-left: 8px; }
+  .track { height: 4px; background: color-mix(in srgb, var(--brand) 18%, transparent); }
+  #bar { height: 100%; width: 0; background: var(--brand); transition: width .4s ease; }
+
+  main.wrap { padding-block: 24px 48px; }
+
+  #hero { text-align: center; padding: 72px 20px; }
+  #hero h2 { font-size: 28px; line-height: 1.2; margin: 0 0 10px; font-weight: 650; letter-spacing: -.01em; }
+  #hero p { margin: 0 auto 22px; color: var(--soft); max-width: 46ch; font-size: 17px; }
+
+  .toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 18px; }
+  #filter-text {
+    flex: 1 1 240px; min-height: 42px; padding: 0 14px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 8px;
   }
-  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
-  button:disabled { opacity: .55; cursor: default; }
-  .buttons { display: flex; gap: 8px; margin-top: 14px; }
-  #form-error { color: var(--bad); margin: 10px 0 0; }
-  #form-error:empty { display: none; }
-  .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-  .stat b { display: block; font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .stat span { color: var(--muted); font-size: 12px; }
-  #company-list { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow: auto; }
-  #company-list li { display: flex; justify-content: space-between; gap: 10px; padding: 4px 0; }
-  .state { color: var(--muted); white-space: nowrap; }
-  .state.running { color: var(--accent); font-weight: 600; }
-  .state.has-numbers { color: var(--good); font-weight: 600; }
-  .company-side { display: flex; gap: 10px; align-items: baseline; }
-  button.again {
-    border: 0; padding: 0; font-size: 12px; font-weight: 400; color: var(--accent);
-    text-decoration: underline; white-space: nowrap;
+  .tabs { display: inline-flex; background: #ebe9e2; border-radius: 8px; padding: 3px; }
+  .tabs button {
+    border: 0; background: none; padding: 7px 13px; border-radius: 6px; cursor: pointer;
+    font-size: 14px; font-weight: 600; color: var(--soft); white-space: nowrap;
   }
-  .section-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
-  .section-head h2 { margin: 0; }
-  .table-wrap { overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; }
-  th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; white-space: nowrap; }
-  th, td { padding: 7px 10px 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
-  .phone { font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
-  .sources { text-align: right; padding-right: 18px; font-variant-numeric: tabular-nums; }
-  th.sources { text-align: right; }
-  .flag { color: var(--warn); }
-  .no-name { color: var(--muted); }
-  .date { white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .empty { color: var(--muted); padding: 16px 0; margin: 0; }
-  a { color: var(--accent); }
+  .tabs button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgba(0,0,0,.12); }
+
+  .company { background: var(--card); border: 1px solid var(--line); border-radius: 12px; margin-bottom: 16px; overflow: hidden; }
+  .company-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 13px 20px; border-bottom: 1px solid var(--line); }
+  .company-head h2 { margin: 0; font-size: 18px; font-weight: 650; }
+  .company-head h2 small { font-size: 14px; font-weight: 400; color: var(--soft); margin-left: 8px; }
+
+  .contact { display: flex; justify-content: space-between; gap: 20px; padding: 15px 20px; flex-wrap: wrap; }
+  .contact + .contact { border-top: 1px solid var(--line); }
+  .who { flex: 1 1 320px; min-width: 0; }
+  .name { font-size: 17px; font-weight: 600; }
+  .name.unknown { font-weight: 400; color: var(--soft); }
+  .meta { color: var(--soft); font-size: 14px; margin-top: 2px; overflow-wrap: anywhere; }
+  .flag {
+    display: inline-block; margin-top: 7px; padding: 3px 10px; border-radius: 6px;
+    background: var(--amber-tint); color: var(--amber); font-size: 13.5px; font-weight: 500;
+  }
+  .call { display: flex; align-items: center; gap: 12px; flex: none; }
+  .phone { font-size: 20px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .copy { min-height: 36px; min-width: 72px; padding: 0 12px; font-size: 14px; }
+  .copy.done { background: var(--brand-tint); border-color: var(--brand); color: var(--brand-dark); }
+
+  .no-match { text-align: center; color: var(--soft); padding: 40px 0; margin: 0; }
+
+  .others { margin-top: 28px; }
+  .others h3 { font-size: 15px; font-weight: 650; margin: 0 0 4px; }
+  .others ul { list-style: none; margin: 0; padding: 0; }
+  .others li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 7px 0; border-bottom: 1px solid var(--line); }
+  .others li span small { color: var(--soft); font-size: 14px; margin-left: 8px; }
+
+  details.activity { margin-top: 32px; }
+  details.activity summary { cursor: pointer; font-weight: 600; font-size: 15px; color: var(--soft); padding: 6px 0; }
   #log {
-    height: 320px; overflow: auto; font-size: 13px;
-    border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px;
+    margin-top: 8px; max-height: 340px; overflow: auto; font-size: 14px; background: var(--card);
+    border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px;
   }
-  .line { display: flex; gap: 10px; padding: 1px 0; }
-  .line time { color: var(--muted); font-variant-numeric: tabular-nums; flex: none; }
+  .line { display: flex; gap: 12px; padding: 2px 0; }
+  .line time { color: var(--soft); font-variant-numeric: tabular-nums; flex: none; }
   .line .message { min-width: 0; overflow-wrap: anywhere; }
-  .line.heading { font-weight: 600; margin-top: 8px; }
-  .line.muted .message { color: var(--muted); }
-  .line.found .message { color: var(--good); font-weight: 600; }
-  .line.warn .message { color: var(--warn); }
+  .line.heading { font-weight: 650; margin-top: 10px; }
+  .line.muted .message { color: var(--soft); }
+  .line.found .message { color: var(--brand-dark); font-weight: 600; }
+  .line.warn .message { color: var(--amber); }
+
+  dialog {
+    margin: 0 0 0 auto; padding: 0; border: 0; height: 100dvh; max-height: none;
+    width: min(480px, 100vw); max-width: none; background: var(--card); color: var(--ink);
+    box-shadow: -8px 0 32px rgba(0,0,0,.18);
+  }
+  dialog::backdrop { background: rgba(20,24,22,.42); }
+  #form { display: flex; flex-direction: column; height: 100%; }
+  .drawer-head { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; border-bottom: 1px solid var(--line); }
+  .drawer-head h2 { margin: 0; font-size: 20px; font-weight: 650; }
+  .close { border: 0; background: none; font-size: 26px; line-height: 1; cursor: pointer; color: var(--soft); padding: 4px 8px; }
+  .drawer-body { flex: 1; overflow: auto; padding: 20px 24px; }
+  .field { margin-bottom: 20px; }
+  .field label { display: block; font-weight: 600; font-size: 15px; margin-bottom: 2px; }
+  .hint { display: block; color: var(--soft); font-size: 13.5px; margin-bottom: 7px; }
+  .field input, .field textarea {
+    width: 100%; padding: 9px 12px; background: var(--card); border: 1px solid #cfccc2; border-radius: 8px;
+  }
+  .field textarea { resize: vertical; }
+  details.more summary { cursor: pointer; font-weight: 600; font-size: 15px; margin-bottom: 8px; }
+  .drawer-foot { border-top: 1px solid var(--line); padding: 14px 24px; }
+  .drawer-foot p { margin: 0 0 10px; font-size: 13.5px; color: var(--soft); }
+  .drawer-foot .btn { width: 100%; min-height: 44px; }
+  #form-error { color: var(--red); background: var(--red-tint); border-radius: 6px; padding: 8px 12px; font-weight: 500; }
+  #form-error:empty { display: none; }
+
+  @media (max-width: 640px) {
+    .wrap { padding-inline: 16px; }
+    .contact, .company-head { padding-inline: 16px; }
+    .call { width: 100%; justify-content: space-between; }
+    .tabs { width: 100%; }
+    .tabs button { flex: 1; padding-inline: 6px; }
+    .top-actions { width: 100%; }
+    .top-actions .btn { flex: 1; }
+  }
+  @media (prefers-reduced-motion: reduce) { #bar { transition: none; } }
 </style>
 </head>
 <body>
 <header>
-  <h1>HR phone finder</h1>
-  <span id="status">Ready</span>
+  <div class="wrap top">
+    <div class="brand">
+      <h1>HR Contacts</h1>
+      <p id="summary">SVCE mock placements</p>
+    </div>
+    <div class="top-actions">
+      <a class="btn" id="download" href="/results.csv" hidden>Download CSV</a>
+      <button class="btn primary" id="new-search" type="button">New search</button>
+    </div>
+  </div>
 </header>
-<main>
-  <div class="column">
-    <section>
-      <form id="form">
-        <label for="companies">Companies <span class="hint">one per line; use | for other names</span></label>
-        <textarea id="companies" rows="8" spellcheck="false"></textarea>
+
+<div id="banner" role="status" hidden>
+  <div class="wrap banner-row">
+    <div><span id="banner-text"></span><span id="banner-detail"></span></div>
+    <button class="btn" id="stop" type="button" hidden>Stop</button>
+  </div>
+  <div class="track" id="track" hidden><div id="bar"></div></div>
+</div>
+
+<main class="wrap">
+  <section id="hero" hidden>
+    <h2>Find HR numbers for your companies</h2>
+    <p>List the companies you want to invite. Numbers they've published appear here as they're found.</p>
+    <button class="btn primary" id="hero-start" type="button">Start your first search</button>
+  </section>
+
+  <div class="toolbar" id="toolbar" hidden>
+    <input id="filter-text" type="search" placeholder="Search by company, name or number" aria-label="Search contacts">
+    <div class="tabs" role="group" aria-label="Filter contacts">
+      <button type="button" data-filter="all" aria-pressed="true">All</button>
+      <button type="button" data-filter="ready" aria-pressed="false">Ready to call</button>
+      <button type="button" data-filter="check" aria-pressed="false">Check first</button>
+    </div>
+  </div>
+
+  <div id="contacts"></div>
+  <p class="no-match" id="no-match" hidden>No contacts match.</p>
+
+  <section class="others" id="none-found" hidden>
+    <h3>No number found</h3>
+    <ul id="none-list"></ul>
+  </section>
+  <section class="others" id="not-searched" hidden>
+    <h3>Not searched yet</h3>
+    <ul id="not-list"></ul>
+  </section>
+
+  <details class="activity" id="activity" hidden>
+    <summary>Activity log</summary>
+    <div id="log"></div>
+  </details>
+</main>
+
+<dialog id="drawer" aria-labelledby="drawer-title">
+  <form id="form">
+    <div class="drawer-head">
+      <h2 id="drawer-title">New search</h2>
+      <button class="close" id="close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div class="drawer-body">
+      <div class="field">
+        <label for="companies">Companies</label>
+        <span class="hint">One per line. Add other names with |, like TCS | Tata Consultancy Services</span>
+        <textarea id="companies" rows="9" spellcheck="false"></textarea>
+      </div>
+      <div class="field">
         <label for="city">City</label>
         <input id="city" value="Chennai">
-        <label for="key">Serper API key <span class="hint" id="key-hint">not saved to disk</span></label>
+      </div>
+      <div class="field">
+        <label for="key">Serper API key</label>
+        <span class="hint" id="key-hint">Kept only until you close the finder. Get one at <a href="https://serper.dev" target="_blank" rel="noopener noreferrer">serper.dev</a>.</span>
         <input id="key" type="password" autocomplete="off">
-        <label for="dnc">Numbers to leave out <span class="hint">one per line</span></label>
-        <textarea id="dnc" rows="3" spellcheck="false"></textarea>
-        <div class="buttons">
-          <button type="submit" class="primary" id="start">Start search</button>
-          <button type="button" id="stop" disabled>Stop</button>
+      </div>
+      <details class="more" id="dnc-section">
+        <summary>Numbers to leave out</summary>
+        <div class="field">
+          <span class="hint">One per line. These are also removed from your saved contacts.</span>
+          <textarea id="dnc" rows="4" spellcheck="false" aria-label="Numbers to leave out"></textarea>
         </div>
-        <p id="form-error" role="alert"></p>
-      </form>
-    </section>
-    <section>
-      <h2>Companies</h2>
-      <p class="empty" id="company-empty">Companies appear here when a search starts.</p>
-      <ul id="company-list"></ul>
-    </section>
-  </div>
-  <div class="column">
-    <section class="stats">
-      <div class="stat"><b id="stat-companies">0 / 0</b><span>companies searched</span></div>
-      <div class="stat"><b id="stat-pages">0</b><span>pages read</span></div>
-      <div class="stat"><b id="stat-searches">0</b><span>searches used this run</span></div>
-      <div class="stat"><b id="stat-numbers">0</b><span>HR numbers saved</span></div>
-    </section>
-    <section>
-      <div class="section-head">
-        <h2>Results</h2>
-        <a class="button" id="download" href="/results.csv" hidden>Download CSV</a>
-      </div>
-      <p class="empty" id="results-empty">No numbers saved yet.</p>
-      <div class="table-wrap" id="table-wrap" hidden>
-        <table>
-          <thead><tr>
-            <th>Company</th><th>HR name</th><th>Phone</th><th>Type</th><th>Page date</th><th class="sources">Sources</th>
-            <th>Check first</th><th>Source</th>
-          </tr></thead>
-          <tbody id="rows"></tbody>
-        </table>
-      </div>
-    </section>
-    <section>
-      <h2>Activity</h2>
-      <div id="log" aria-live="polite"></div>
-    </section>
-  </div>
-</main>
+      </details>
+    </div>
+    <div class="drawer-foot">
+      <p id="cost"></p>
+      <p id="form-error" role="alert"></p>
+      <button class="btn primary" id="start" type="submit">Start search</button>
+    </div>
+  </form>
+</dialog>
+
 <script>
 const $ = id => document.getElementById(id);
-const STATUS_TEXT = { idle: "Ready", running: "Searching…", done: "Finished", stopped: "Stopped", failed: "Failed" };
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const PLURALS = { company: "companies", search: "searches" };
+const plural = (n, word) => n + " " + (n === 1 ? word : PLURALS[word] || word + "s");
+
+let allEvents = [];
 let seenEvents = 0;
-let lastRows = "";
+let latest = null;
+let lastRender = "";
+let filter = "all";
 let timer = null;
+let searchesPerCompany = 5;
 
 function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -170,12 +265,144 @@ function el(tag, className, text) {
   return node;
 }
 
+function friendlyDate(iso) {
+  const [year, month, day] = iso.split("-").map(Number);
+  return day + " " + MONTHS[month - 1] + " " + year;
+}
+
+function hostOf(url) {
+  return new URL(url).hostname.replace(/^www\./, "");
+}
+
 function sourceLink(url) {
-  const link = el("a", "", new URL(url).hostname.replace(/^www\./, ""));
+  const link = el("a", "", hostOf(url));
   link.href = url;
   link.target = "_blank";
   link.rel = "noopener noreferrer";
   return link;
+}
+
+// "Only one source" is normal; the rest are worth a look before calling.
+function seriousFlags(row) {
+  return row.check_first.split("; ").filter(flag => flag && flag !== "only one source");
+}
+
+function matchesFilters(row) {
+  const flagged = seriousFlags(row).length > 0;
+  if (filter === "ready" && flagged) return false;
+  if (filter === "check" && !flagged) return false;
+  const words = $("filter-text").value.trim().toLowerCase();
+  if (!words) return true;
+  const digits = words.replace(/\D/g, "");
+  return (row.company + " " + row.hr_name).toLowerCase().includes(words)
+    || (digits.length > 2 && row.phone.replace(/\D/g, "").includes(digits));
+}
+
+function searchAgainButton(name) {
+  const button = el("button", "link-btn", "Search again");
+  button.type = "button";
+  button.addEventListener("click", () => startRun({ only: name }));
+  return button;
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // Some browsers refuse the clipboard API; this older route still works in them.
+    const scratch = el("textarea");
+    scratch.value = text;
+    scratch.style.position = "fixed";
+    scratch.style.opacity = "0";
+    document.body.append(scratch);
+    scratch.select();
+    const copied = document.execCommand("copy");
+    scratch.remove();
+    return copied;
+  }
+}
+
+function contactRow(row) {
+  const item = el("div", "contact");
+  const who = el("div", "who");
+  who.append(row.hr_name ? el("div", "name", row.hr_name) : el("div", "name unknown", "Name not listed"));
+
+  const meta = el("div", "meta");
+  const lineType = { mobile: "Mobile", landline: "Landline" }[row.line_type];
+  const parts = [];
+  if (lineType) parts.push(lineType);
+  if (row.page_date) parts.push("Page from " + friendlyDate(row.page_date));
+  parts.push(plural(row.sources_found, "source"));
+  meta.append(parts.join(" · ") + " · ", sourceLink(row.source_url));
+  who.append(meta);
+
+  const flags = seriousFlags(row);
+  if (flags.length) {
+    const text = flags.join("; ");
+    who.append(el("div", "flag", text.charAt(0).toUpperCase() + text.slice(1)));
+  }
+  item.append(who);
+
+  const call = el("div", "call");
+  call.append(el("span", "phone", row.phone));
+  const copy = el("button", "btn copy", "Copy");
+  copy.type = "button";
+  copy.setAttribute("aria-label", "Copy " + row.phone);
+  copy.addEventListener("click", async () => {
+    const copied = await copyText(row.phone.replace(/\s/g, ""));
+    copy.textContent = copied ? "Copied" : "Failed";
+    if (copied) copy.classList.add("done");
+    setTimeout(() => { copy.textContent = "Copy"; copy.classList.remove("done"); }, 1500);
+  });
+  call.append(copy);
+  item.append(call);
+  return item;
+}
+
+function renderContacts(state, running) {
+  const box = $("contacts");
+  box.replaceChildren();
+  const groups = new Map();
+  for (const row of state.rows.filter(matchesFilters)) {
+    if (!groups.has(row.company)) groups.set(row.company, []);
+    groups.get(row.company).push(row);
+  }
+  const listed = new Set(state.companies.map(c => c.name));
+  for (const [company, rows] of groups) {
+    const card = el("article", "company");
+    const head = el("div", "company-head");
+    const title = el("h2", "", company);
+    title.append(el("small", "", plural(rows.length, "number")));
+    head.append(title);
+    if (!running && listed.has(company)) head.append(searchAgainButton(company));
+    card.append(head);
+    rows.forEach(row => card.append(contactRow(row)));
+    box.append(card);
+  }
+  $("no-match").hidden = groups.size > 0 || state.rows.length === 0;
+}
+
+function renderOthers(state, running) {
+  const none = state.companies.filter(c => !c.found && ["done", "skipped", "stopped", "incomplete"].includes(c.state));
+  const list = $("none-list");
+  list.replaceChildren();
+  for (const company of none) {
+    const item = el("li");
+    const label = el("span", "", company.name);
+    if (company.state === "stopped") label.append(el("small", "", "Search stopped"));
+    if (company.state === "incomplete") label.append(el("small", "", "A search failed"));
+    item.append(label);
+    if (!running) item.append(searchAgainButton(company.name));
+    list.append(item);
+  }
+  $("none-found").hidden = none.length === 0;
+
+  const waiting = state.companies.filter(c => c.state === "waiting");
+  const notList = $("not-list");
+  notList.replaceChildren();
+  for (const company of waiting) notList.append(el("li", "", company.name));
+  $("not-searched").hidden = waiting.length === 0 || running;
 }
 
 function renderLog(events) {
@@ -195,86 +422,86 @@ function renderLog(events) {
   if (atBottom) log.scrollTop = log.scrollHeight;
 }
 
-function renderCompanies(companies, running) {
-  const list = $("company-list");
-  list.replaceChildren();
-  $("company-empty").hidden = companies.length > 0;
-  for (const company of companies) {
-    const item = el("li");
-    item.append(el("span", "", company.name));
-    let text = running ? "Waiting" : "Not searched";
-    let cls = "state";
-    if (company.state === "running") {
-      text = "Searching…";
-      cls += " running";
-    } else if (company.found) {
-      text = company.found + (company.found === 1 ? " number" : " numbers");
-      cls += " has-numbers";
-    } else if (company.state === "done" || company.state === "skipped") {
-      text = "None found";
-    } else if (company.state === "stopped") {
-      text = "Stopped";
-    } else if (company.state === "incomplete") {
-      text = "Search failed";
-    }
-    const side = el("span", "company-side");
-    const status = el("span", cls, text);
-    if (company.searched_on) status.title = "Last searched " + company.searched_on;
-    side.append(status);
-    if (!running && company.state !== "waiting") {
-      const again = el("button", "again", "Search again");
-      again.type = "button";
-      again.addEventListener("click", () => startRun({ only: company.name }));
-      side.append(again);
-    }
-    item.append(side);
-    list.append(item);
+function explainStop() {
+  const warning = [...allEvents].reverse().find(e => e.level === "warn" && !e.text.startsWith("Couldn't update"));
+  const text = warning ? warning.text : "";
+  if (text.includes("stopped by you")) return ["warn", "Search stopped. Numbers found so far are saved."];
+  if (/\b(401|403)\b/.test(text)) return ["bad", "Serper didn't accept your API key. Check it under New search."];
+  if (/\b(402|429)\b/.test(text)) return ["bad", "Serper is out of credits or asking you to slow down. Numbers found so far are saved."];
+  return ["bad", text || "The search stopped unexpectedly. Numbers found so far are saved."];
+}
+
+function renderBanner(state, running) {
+  const banner = $("banner");
+  const progressing = state.companies.filter(c => c.state !== "skipped");
+  const finished = progressing.filter(c => c.state !== "waiting" && c.state !== "running").length;
+  const current = state.companies.find(c => c.state === "running");
+
+  banner.className = "";
+  $("banner-detail").textContent = "";
+  $("track").hidden = !running;
+  $("stop").hidden = !running;
+  $("stop").disabled = state.stopping;
+  $("stop").textContent = state.stopping ? "Stopping…" : "Stop";
+
+  if (running) {
+    banner.hidden = false;
+    $("banner-text").textContent = current ? "Searching " + current.name : "Starting…";
+    $("banner-detail").textContent = finished + " of " + plural(progressing.length, "company")
+      + " done · " + plural(state.searches, "search") + " used";
+    $("bar").style.width = (progressing.length ? (finished / progressing.length) * 100 : 0) + "%";
+    return;
+  }
+  if (state.status === "idle") {
+    banner.hidden = true;
+    return;
+  }
+  banner.hidden = false;
+  const saveProblem = allEvents.find(e => e.text.startsWith("Couldn't update") || e.text.startsWith("Couldn't save"));
+  if (state.status === "stopped" || state.status === "failed") {
+    const [level, text] = explainStop();
+    banner.className = level;
+    $("banner-text").textContent = text;
+    return;
+  }
+  const nothing = allEvents.find(e => e.text.startsWith("Nothing new"));
+  const finishedLine = [...allEvents].reverse().find(e => e.text.startsWith("Finished."));
+  $("banner-text").textContent = nothing ? nothing.text : (finishedLine ? finishedLine.text : "Finished.");
+  if (saveProblem) {
+    banner.className = "warn";
+    $("banner-detail").textContent = saveProblem.text;
+  } else if (allEvents.some(e => e.text.startsWith("Search failed"))) {
+    banner.className = "warn";
+    $("banner-detail").textContent = "Some searches failed. Those companies weren't marked as done.";
+  } else {
+    $("banner-detail").textContent = plural(state.searches, "search") + " used";
   }
 }
 
-function renderRows(rows) {
-  const signature = JSON.stringify(rows);
-  if (signature === lastRows) return;
-  lastRows = signature;
-  const body = $("rows");
-  body.replaceChildren();
-  for (const row of rows) {
-    const tr = el("tr");
-    tr.append(el("td", "", row.company));
-    tr.append(el("td", row.hr_name ? "" : "no-name", row.hr_name || "Not listed"));
-    tr.append(el("td", "phone", row.phone));
-    tr.append(el("td", "", row.line_type));
-    tr.append(el("td", row.page_date ? "date" : "date no-name", row.page_date || "Unknown"));
-    tr.append(el("td", "sources", row.sources_found));
-    tr.append(el("td", "flag", row.check_first));
-    const source = el("td");
-    source.append(sourceLink(row.source_url));
-    tr.append(source);
-    body.append(tr);
-  }
-  $("results-empty").hidden = rows.length > 0;
-  $("table-wrap").hidden = rows.length === 0;
-  $("download").hidden = rows.length === 0;
-}
-
-function renderState(state) {
+function render(state) {
   const running = state.status === "running";
-  renderLog(state.events);
-  seenEvents = state.event_count;
-  renderCompanies(state.companies, running);
-  renderRows(state.rows);
+  const hasRows = state.rows.length > 0;
+  const companyCount = new Set(state.rows.map(r => r.company)).size;
 
-  const status = $("status");
-  status.textContent = state.stopping ? "Stopping…" : STATUS_TEXT[state.status];
-  status.className = state.status;
+  $("hero").hidden = hasRows || state.status !== "idle";
+  $("toolbar").hidden = !hasRows;
+  $("download").hidden = !hasRows;
+  $("activity").hidden = allEvents.length === 0;
+  $("new-search").disabled = running;
   $("start").disabled = running;
-  $("stop").disabled = !running || state.stopping;
+  $("summary").textContent = hasRows
+    ? plural(state.rows.length, "number") + " from " + plural(companyCount, "company")
+    : "SVCE mock placements";
 
-  const started = state.companies.filter(c => c.state !== "waiting").length;
-  $("stat-searches").textContent = state.searches;
-  $("stat-companies").textContent = started + " / " + state.companies.length;
-  $("stat-pages").textContent = state.pages;
-  $("stat-numbers").textContent = state.rows.length;
+  renderBanner(state, running);
+
+  // Rebuild the list only when it changed, so scrolling and Copy feedback aren't disturbed.
+  const signature = JSON.stringify([state.rows, state.companies, running, filter, $("filter-text").value]);
+  if (signature !== lastRender) {
+    lastRender = signature;
+    renderContacts(state, running);
+    renderOthers(state, running);
+  }
   return running;
 }
 
@@ -283,10 +510,18 @@ async function poll() {
   let running = true;
   try {
     const response = await fetch("/api/state?since=" + seenEvents);
-    running = renderState(await response.json());
-    $("form-error").textContent = "";
+    const state = await response.json();
+    allEvents.push(...state.events);
+    renderLog(state.events);
+    seenEvents = state.event_count;
+    latest = state;
+    running = render(state);
   } catch {
-    $("form-error").textContent = "Lost contact with the finder. Is webapp.py still running?";
+    const banner = $("banner");
+    banner.hidden = false;
+    banner.className = "bad";
+    $("banner-text").textContent = "Lost contact with the finder. Is webapp.py still running?";
+    $("banner-detail").textContent = "";
   }
   if (running) timer = setTimeout(poll, 1000);
 }
@@ -301,7 +536,6 @@ async function post(path, body) {
 
 async function startRun(extra) {
   $("form-error").textContent = "";
-  $("start").disabled = true;
   const response = await post("/api/start", {
     companies: $("companies").value,
     city: $("city").value,
@@ -311,35 +545,65 @@ async function startRun(extra) {
   });
   if (!response.ok) {
     $("form-error").textContent = (await response.json()).error;
-    $("start").disabled = false;
+    if (!$("drawer").open) openDrawer();
     return;
   }
-  if ($("key").value) $("key-hint").textContent = "saved until you close the finder";
+  if ($("key").value) showKeySaved();
   $("key").value = "";
+  $("drawer").close();
+  allEvents = [];
   seenEvents = 0;
-  lastRows = "";
+  lastRender = "";
   $("log").replaceChildren();
   poll();
 }
 
+function showKeySaved() {
+  $("key-hint").textContent = "Already added. Leave blank to keep using it.";
+}
+
+function updateCost() {
+  const count = $("companies").value.split("\n").map(s => s.trim()).filter(s => s && !s.startsWith("#")).length;
+  $("cost").textContent = plural(count, "company") + " listed. Each new company uses "
+    + searchesPerCompany + " searches; companies already searched are skipped.";
+}
+
+function openDrawer() {
+  updateCost();
+  $("drawer").showModal();
+}
+
+$("new-search").addEventListener("click", openDrawer);
+$("hero-start").addEventListener("click", openDrawer);
+$("close").addEventListener("click", () => $("drawer").close());
+$("companies").addEventListener("input", updateCost);
 $("form").addEventListener("submit", event => {
   event.preventDefault();
   startRun({});
 });
-
 $("stop").addEventListener("click", async () => {
   $("stop").disabled = true;
   await post("/api/stop", {});
   poll();
 });
+$("filter-text").addEventListener("input", () => { if (latest) render(latest); });
+for (const button of document.querySelectorAll(".tabs button")) {
+  button.addEventListener("click", () => {
+    filter = button.dataset.filter;
+    for (const other of document.querySelectorAll(".tabs button")) {
+      other.setAttribute("aria-pressed", String(other === button));
+    }
+    if (latest) render(latest);
+  });
+}
 
 (async () => {
   const config = await (await fetch("/api/config")).json();
   $("companies").value = config.companies;
   $("dnc").value = config.do_not_call;
-  if (config.has_key) {
-    $("key-hint").textContent = "already set; leave blank to keep it";
-  }
+  searchesPerCompany = config.searches_per_company;
+  if (config.has_key) showKeySaved();
+  if (config.do_not_call.trim()) $("dnc-section").open = true;
   poll();
 })();
 </script>
