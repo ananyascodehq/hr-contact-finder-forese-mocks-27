@@ -11,6 +11,7 @@ import csv
 import io
 import logging
 import os
+import socket
 import threading
 import webbrowser
 from datetime import datetime
@@ -18,6 +19,7 @@ from pathlib import Path
 
 import requests
 from flask import Flask, Response, abort, jsonify, request, send_file
+from werkzeug.exceptions import HTTPException
 
 import hr_phone_finder as finder
 
@@ -63,7 +65,16 @@ def clean_lines(text):
 
 
 def read_text(path):
-    return path.read_text(encoding="utf-8-sig") if path.exists() else ""
+    """A missing, locked or oddly encoded file shouldn't stop the page opening."""
+    try:
+        return path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return ""
+
+
+def text_field(data, name):
+    value = data.get(name, "")
+    return value if isinstance(value, str) else ""
 
 
 def rows_to_csv(rows):
@@ -104,7 +115,7 @@ def saved_run():
     st = get_store()
     saved = empty_run()
     saved["rows"] = finder.to_rows(st.contacts)
-    companies = [finder.parse_company(line) for line in clean_lines(read_text(COMPANIES_FILE))]
+    companies = finder.parse_companies(clean_lines(read_text(COMPANIES_FILE)))
     saved["companies"] = company_entries(companies, st, [])
     count_found(saved["companies"], saved["rows"])
     return saved
@@ -147,7 +158,11 @@ def worker(to_search, city, do_not_call, search_fn, read_fn, st):
         if kind == "company_done":
             if details["complete"]:
                 st.mark_searched(details["name"])
-            st.save()  # a crash or closed window loses at most the current company
+            try:
+                st.save()  # a crash or closed window loses at most the current company
+            except OSError as error:  # keep searching; the end of the run tries again
+                with lock:
+                    add_event("warn", f"Couldn't save progress: {error}")
             with lock:
                 entry = entry_for(details["name"])
                 entry["state"] = "done" if details["complete"] else "incomplete"
@@ -179,18 +194,25 @@ def worker(to_search, city, do_not_call, search_fn, read_fn, st):
         with lock:
             add_event("warn", f"Something went wrong: {error}")
 
-    rows = finder.to_rows(contacts)
-    new_numbers = len(contacts) - numbers_before
-    summary = f"{new_numbers} new number{'s' if new_numbers != 1 else ''}, {len(rows)} saved in total"
+    rows = run["rows"]
+    summary = "the search ended"
     problems = []
     try:
-        st.save()
-    except OSError as error:
-        problems.append(f"Couldn't save {st.path.name}: {error}")
-    try:
-        finder.write_csv(OUTPUT_FILE, rows)
-    except OSError:  # usually the CSV is open in Excel, which locks it on Windows
-        problems.append(f"Couldn't update {OUTPUT_FILE.name}. Close it if it's open, then use Download CSV.")
+        rows = finder.to_rows(contacts)
+        new_numbers = len(contacts) - numbers_before
+        summary = f"{new_numbers} new number{'s' if new_numbers != 1 else ''}, {len(rows)} saved in total"
+        try:
+            st.save()
+        except OSError as error:
+            problems.append(f"Couldn't save {st.path.name}: {error}")
+        try:
+            finder.write_csv(OUTPUT_FILE, rows)
+        except OSError:  # usually the CSV is open in Excel, which locks it on Windows
+            problems.append(f"Couldn't update {OUTPUT_FILE.name}. Close it if it's open, then use Download CSV.")
+    except Exception as error:
+        outcome = "failed"
+        problems.append(f"Something went wrong while saving: {error}")
+    # Nothing below can fail, so the page can never be stuck on "running".
     with lock:
         run["rows"] = rows
         run["status"] = outcome
@@ -201,6 +223,22 @@ def worker(to_search, city, do_not_call, search_fn, read_fn, st):
         add_event("heading", f"Finished. {summary}.")
         for problem in problems:
             add_event("warn", problem)
+
+
+@app.errorhandler(HTTPException)
+def http_error(error):
+    if request.path.startswith("/api/"):
+        return jsonify(error=error.description), error.code
+    return error
+
+
+@app.errorhandler(Exception)
+def unexpected_error(error):
+    app.logger.exception("Unexpected error on %s", request.path)
+    message = "Something went wrong in the finder. Try again, or restart webapp.py."
+    if request.path.startswith("/api/"):
+        return jsonify(error=message), 500
+    return message, 500
 
 
 @app.before_request
@@ -229,16 +267,18 @@ def config():
 def start():
     global api_key, run
     data = request.get_json()  # requires a JSON body, which other websites can't send here
-    lines = clean_lines(data.get("companies", ""))
-    city = data.get("city", "").strip() or "Chennai"
-    key = data.get("api_key", "").strip() or api_key
-    only = data.get("only")  # "Search again" on one company
-    if not lines:
+    if not isinstance(data, dict):
+        return jsonify(error="The request wasn't in the expected format."), 400
+    companies_text = text_field(data, "companies")
+    companies = finder.parse_companies(clean_lines(companies_text))
+    city = text_field(data, "city").strip() or "Chennai"
+    key = text_field(data, "api_key").strip() or api_key
+    only = text_field(data, "only")  # "Search again" on one company
+    if not companies:
         return jsonify(error="Add at least one company."), 400
 
-    dnc_text = data.get("do_not_call", "")
+    dnc_text = text_field(data, "do_not_call")
     do_not_call = {n for n in map(finder.e164, clean_lines(dnc_text)) if n}
-    companies = [finder.parse_company(line) for line in lines]
 
     with lock:
         if run["status"] == "running":
@@ -267,13 +307,22 @@ def start():
         if not to_search:
             add_event("info", "Nothing new to search. Use Search again beside a company to redo it.")
 
-    COMPANIES_FILE.write_text(data.get("companies", ""), encoding="utf-8")
-    DO_NOT_CALL_FILE.write_text(dnc_text, encoding="utf-8")
+    for path, text in ((COMPANIES_FILE, companies_text), (DO_NOT_CALL_FILE, dnc_text)):
+        try:
+            path.write_text(text, encoding="utf-8")
+        except OSError as error:  # worth a warning, but no reason to cancel the search
+            with lock:
+                add_event("warn", f"Couldn't save {path.name}: {error}")
 
-    search_fn, read_fn = make_backend(key)
-    threading.Thread(
-        target=worker, args=(to_search, city, do_not_call, search_fn, read_fn, st), daemon=True
-    ).start()
+    try:
+        search_fn, read_fn = make_backend(key)
+        threading.Thread(
+            target=worker, args=(to_search, city, do_not_call, search_fn, read_fn, st), daemon=True
+        ).start()
+    except Exception:
+        with lock:
+            run["status"] = "idle"  # don't leave the page stuck on "running"
+        raise
     return jsonify(ok=True)
 
 
@@ -297,6 +346,7 @@ def state():
             companies=run["companies"],
             pages=run["pages"],
             searches=run["searches"],
+            notice=get_store().warning,
         )
 
 
@@ -311,14 +361,24 @@ def results_csv():
     )
 
 
+def port_is_free(port):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        return probe.connect_ex(("127.0.0.1", port)) != 0
+
+
 def main():
     global run
     parser = argparse.ArgumentParser(description="Web page for the HR phone finder")
     parser.add_argument("--no-browser", action="store_true", help="don't open the page automatically")
     args = parser.parse_args()
+    url = f"http://127.0.0.1:{PORT}"
+    if not port_is_free(PORT):
+        print(f"Port {PORT} is already in use. If the finder is already running, it's at {url}")
+        if not args.no_browser:
+            webbrowser.open(url)
+        return
     run = saved_run()
     logging.getLogger("werkzeug").setLevel(logging.WARNING)  # hide the per-second polling lines
-    url = f"http://127.0.0.1:{PORT}"
     print(f"HR phone finder is running at {url} (press Ctrl+C to stop)")
     if not args.no_browser:
         threading.Timer(1, webbrowser.open, [url]).start()

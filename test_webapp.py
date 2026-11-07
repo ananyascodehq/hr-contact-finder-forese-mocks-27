@@ -232,3 +232,112 @@ def test_key_is_not_written_to_the_saved_file(client):
     start(client, api_key="secret-key")
     wait_until_finished(client)
     assert "secret-key" not in webapp.STORE_FILE.read_text()
+
+
+@pytest.mark.parametrize("body", ["[]", '"text"', "5", "null"])
+def test_wrong_shape_requests_get_a_clear_error(client, body):
+    response = client.post("/api/start", data=body, content_type="application/json")
+    assert response.status_code == 400
+    assert response.get_json()["error"]
+
+
+def test_wrong_field_types_are_treated_as_empty(client):
+    response = client.post("/api/start", json={"companies": ["Acme"], "api_key": 5})
+    assert response.status_code == 400
+    assert "company" in response.get_json()["error"]
+
+
+def test_malformed_json_gets_a_json_error(client):
+    response = client.post("/api/start", data="{oops", content_type="application/json")
+    assert response.status_code == 400
+    assert response.get_json()["error"]
+
+
+def test_a_line_with_no_name_is_ignored(client):
+    assert start(client, companies="|\nAcme\n").status_code == 200
+    assert [c["name"] for c in wait_until_finished(client)["companies"]] == ["Acme"]
+
+
+def test_only_lines_with_no_names_is_refused(client):
+    assert start(client, companies="|\n | \n").status_code == 400
+
+
+def test_repeated_company_is_searched_once(client):
+    start(client, companies="Acme\nacme\nACME\n")
+    assert wait_until_finished(client)["searches"] == len(finder.SEARCH_PHRASES)
+
+
+def test_unexpected_errors_on_the_api_are_json(client, monkeypatch):
+    def boom(key):
+        raise RuntimeError("secret detail")
+
+    monkeypatch.setattr(webapp, "make_backend", boom)
+    response = start(client)
+    assert response.status_code == 500
+    assert "secret detail" not in response.get_data(as_text=True)
+    assert response.get_json()["error"]
+    assert client.get("/api/state").get_json()["status"] != "running"  # can start again
+
+
+def test_crash_during_a_run_is_reported_not_stuck(client, monkeypatch):
+    def boom(*_, **__):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr(finder, "collect", boom)
+    start(client, companies="Acme\n")
+    state = wait_until_finished(client)
+    assert state["status"] == "failed"
+    assert any("kaboom" in e["text"] for e in state["events"])
+    assert state["companies"][0]["state"] != "running"
+
+
+def test_saving_problems_do_not_end_the_run(client, monkeypatch):
+    def refuse(self):
+        raise PermissionError("file is locked")
+
+    monkeypatch.setattr(finder.Store, "save", refuse)
+    start(client)
+    state = wait_until_finished(client)
+    assert state["status"] == "done"
+    assert state["rows"]
+    assert any("Couldn't save" in e["text"] for e in state["events"])
+
+
+def test_csv_locked_by_excel_is_reported(client, monkeypatch):
+    def refuse(*_):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(finder, "write_csv", refuse)
+    start(client, companies="Acme\n")
+    state = wait_until_finished(client)
+    assert state["status"] == "done"
+    assert any("Close it if it's open" in e["text"] for e in state["events"])
+    assert "098765 43210" in client.get("/results.csv").get_data(as_text=True)
+
+
+def test_input_files_that_cant_be_saved_do_not_stop_the_search(client, monkeypatch):
+    original = webapp.Path.write_text
+
+    def refuse(self, *args, **kwargs):
+        if self.name in ("companies.txt", "do_not_call.txt"):
+            raise PermissionError("locked")
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(webapp.Path, "write_text", refuse)
+    assert start(client, companies="Acme\n").status_code == 200
+    state = wait_until_finished(client)
+    assert state["status"] == "done"
+    assert state["rows"]
+
+
+def test_oddly_encoded_companies_file_still_opens(client):
+    webapp.COMPANIES_FILE.write_bytes("Caf\xe9 Labs\n".encode("latin-1"))
+    assert client.get("/api/config").status_code == 200
+    assert webapp.saved_run()["companies"]
+
+
+def test_damaged_saved_file_shows_a_notice(client):
+    webapp.STORE_FILE.write_text("{ not json")
+    webapp.store = None
+    notice = client.get("/api/state").get_json()["notice"]
+    assert "damaged" in notice
