@@ -361,3 +361,184 @@ def test_failed_search_means_company_is_not_done():
         on_event=lambda kind, **d: done.append(d["complete"]) if kind == "company_done" else None,
     )
     assert done == [False]
+
+
+def test_lines_with_no_name_and_repeats_are_ignored():
+    companies = finder.parse_companies(["Acme", "|", " | ", "ACME | Acme Inc", "Beta"])
+    assert [c.name for c in companies] == ["Acme", "Beta"]
+
+
+@pytest.mark.parametrize("raw", [123, ["x"], {"a": 1}, "99999999999999 years ago"])
+def test_strange_dates_are_ignored(raw):
+    assert finder.parse_date_text(raw, TODAY) is None
+
+
+def test_is_old_tolerates_a_bad_date():
+    assert finder.is_old("not-a-date") is False
+
+
+def api_response(status=200, body=None, text=""):
+    response = FakeResponse(text.encode(), status=status)
+    response.status_code = status
+    response.json = lambda: body if body is not None else {}
+
+    def raise_for_status():
+        if status >= 400:
+            raise finder.requests.HTTPError(f"{status}", response=response)
+    response.raise_for_status = raise_for_status
+    return response
+
+
+class FakeApi:
+    def __init__(self, *replies):
+        self.replies = list(replies)
+        self.calls = 0
+
+    def post(self, *_, **__):
+        self.calls += 1
+        reply = self.replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+
+def run_search(api):
+    return finder.search(api, "key", "query", retry_delay=0)
+
+
+def test_search_retries_a_brief_network_problem():
+    api = FakeApi(finder.requests.ConnectionError(), api_response(body={"organic": [{"link": "x"}]}))
+    assert run_search(api) == [{"link": "x"}]
+    assert api.calls == 2
+
+
+def test_search_retries_a_server_error():
+    api = FakeApi(api_response(503), api_response(502), api_response(body={"organic": []}))
+    assert run_search(api) == []
+    assert api.calls == 3
+
+
+def test_search_gives_up_after_its_tries():
+    api = FakeApi(*[finder.requests.Timeout() for _ in range(finder.SEARCH_ATTEMPTS)])
+    with pytest.raises(finder.requests.Timeout):
+        run_search(api)
+    assert api.calls == finder.SEARCH_ATTEMPTS
+
+
+@pytest.mark.parametrize("status, text", [
+    (401, "bad key"), (403, "forbidden"), (402, "pay"), (429, "slow down"), (400, "Not enough credits"),
+])
+def test_key_and_credit_problems_stop_without_retrying(status, text):
+    api = FakeApi(api_response(status, text=text))
+    with pytest.raises(finder.SearchStopped):
+        run_search(api)
+    assert api.calls == 1
+
+
+def test_other_bad_requests_count_as_failed_searches():
+    with pytest.raises(finder.requests.HTTPError):
+        run_search(FakeApi(api_response(400, text="bad query")))
+
+
+@pytest.mark.parametrize("body", [[], {"organic": "nope"}, {"organic": None}, {"other": 1}])
+def test_unexpected_search_replies_mean_no_results(body):
+    assert run_search(FakeApi(api_response(body=body))) == []
+
+
+def test_strange_entries_in_results_are_dropped():
+    assert run_search(FakeApi(api_response(body={"organic": ["x", 1, {"link": "y"}]}))) == [{"link": "y"}]
+
+
+def test_one_bad_page_does_not_end_the_run():
+    def read(url):
+        if "boom" in url:
+            raise RuntimeError("parser exploded")
+        if "bad-shape" in url:
+            return 42
+        return ("", "Acme HR 98765 43210")
+
+    statuses = []
+    contacts = finder.collect(
+        [ACME], "Chennai",
+        lambda query: [{"link": "https://a.example/boom"}, {"link": "http://[broken"},
+                       {"link": 7}, {"link": "https://a.example/bad-shape"},
+                       {"link": "https://a.example/good"}],
+        read, log=lambda *_: None,
+        on_event=lambda kind, **d: statuses.append(d["status"]) if kind == "page" else None,
+    )
+    assert statuses.count("unreadable") == 3
+    assert list(contacts) == [("Acme", "+919876543210")]
+
+
+def test_stops_when_searches_keep_failing():
+    calls = []
+
+    def failing(query):
+        calls.append(query)
+        raise finder.requests.ConnectionError("network down")
+
+    events = []
+    finder.collect(
+        [ACME, BETA, finder.parse_company("Gamma")], "Chennai", failing, {}.get, log=lambda *_: None,
+        on_event=lambda kind, **d: events.append((kind, d)),
+    )
+    assert len(calls) == finder.MAX_FAILED_SEARCHES_IN_A_ROW
+    assert any(kind == "stopped" and "keep failing" in d["reason"] for kind, d in events)
+
+
+def test_a_success_resets_the_failure_count():
+    count = {"n": 0}
+
+    def flaky(query):
+        count["n"] += 1
+        if count["n"] % 2:
+            raise finder.requests.ConnectionError("blip")
+        return []
+
+    events = []
+    finder.collect([ACME, BETA], "Chennai", flaky, {}.get, log=lambda *_: None,
+                   on_event=lambda kind, **d: events.append(kind))
+    assert "stopped" not in events
+
+
+def test_search_errors_are_short_and_plain():
+    assert "timed out" in finder.describe_search_error(finder.requests.Timeout("x" * 500))
+    assert "connect" in finder.describe_search_error(finder.requests.ConnectionError("x" * 500))
+
+
+def test_damaged_store_gives_a_warning(tmp_path):
+    path = tmp_path / "data.json"
+    path.write_text("{ not json")
+    store = finder.Store(path).load()
+    assert "damaged" in store.warning
+    store.save()  # a fresh list can be saved over the moved-aside file
+    assert path.exists()
+
+
+@pytest.mark.parametrize("content", ["[]", '{"contacts": 5, "searched": {}}', '{"contacts": []}',
+                                     '{"contacts": [{"nope": 1}], "searched": {}}',
+                                     '{"contacts": [], "searched": []}'])
+def test_wrong_shape_store_counts_as_damaged(tmp_path, content):
+    path = tmp_path / "data.json"
+    path.write_text(content)
+    assert "damaged" in finder.Store(path).load().warning
+
+
+def test_bad_entries_in_store_are_dropped_and_good_ones_kept(tmp_path):
+    good = {"company": "Acme", "phone_key": "+919876543210", "phone": "098765 43210",
+            "line_type": "mobile", "urls": ["https://a.example"], "page_date": "garbage"}
+    bad = dict(good, urls=[], phone_key="+919123456789")
+    path = tmp_path / "data.json"
+    path.write_text(finder.json.dumps({"contacts": [good, bad], "searched": {}}))
+    store = finder.Store(path).load()
+    rows = finder.to_rows(store.contacts)
+    assert [r["phone"] for r in rows] == ["098765 43210"]
+    assert rows[0]["page_date"] == ""
+
+
+def test_unreadable_store_is_never_overwritten(tmp_path):
+    store = finder.Store(tmp_path / "data.json")
+    store.locked = True
+    with pytest.raises(OSError):
+        store.save()
+    assert not (tmp_path / "data.json").exists()

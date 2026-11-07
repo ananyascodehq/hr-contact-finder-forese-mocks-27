@@ -36,6 +36,9 @@ MAX_PAGE_BYTES = 3_000_000
 PAGES_PER_QUERY = 5
 CONTEXT_CHARS = 150  # how far either side of a number to look for company / HR words
 MAX_PDF_PAGES = 30
+SEARCH_ATTEMPTS = 3  # tries per search when the network or the API has a brief problem
+RETRY_DELAY = 2  # seconds, doubled after each failed try
+MAX_FAILED_SEARCHES_IN_A_ROW = 6  # then stop, rather than failing through every company
 OLD_AFTER_DAYS = 548  # about 18 months; older pages are read last and flagged
 
 # Each phrase costs one search credit per company. Edit these to tune what gets found.
@@ -143,8 +146,19 @@ def parse_company(line):
     return Company(names[0], re.compile(rf"(?<!\w)({pattern})(?!\w)", re.I))
 
 
+def parse_companies(lines):
+    """Parse company lines, ignoring lines with no name and repeats of the same company."""
+    companies = {}
+    for line in lines:
+        if any(part.strip() for part in line.split("|")):
+            company = parse_company(line)
+            companies.setdefault(company.name.lower(), company)
+    return list(companies.values())
+
+
 def load_lines(path):
-    with open(path, encoding="utf-8-sig") as f:
+    # errors="replace" so a file saved in another encoding can't stop the run.
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
         return [s for s in (line.strip() for line in f) if s and not s.startswith("#")]
 
 
@@ -222,14 +236,17 @@ def extract_numbers(text, title, company):
 def parse_date_text(raw, today=None):
     """Read '3 weeks ago', 'Mar 3, 2025' or an ISO date; None if unclear or in the future."""
     today = today or date.today()
-    raw = (raw or "").strip()
-    if not raw:
+    if not isinstance(raw, str) or not raw.strip():
         return None
+    raw = raw.strip()
     parsed = None
     relative = re.match(r"(\d+)\s+(hour|day|week|month|year)s?\s+ago", raw, re.I)
     if relative:
         days = {"hour": 0, "day": 1, "week": 7, "month": 30, "year": 365}[relative[2].lower()]
-        parsed = today - timedelta(days=int(relative[1]) * days)
+        try:
+            parsed = today - timedelta(days=int(relative[1]) * days)
+        except OverflowError:
+            return None
     else:
         for fmt in ("%b %d, %Y", "%B %d, %Y", "%d %b %Y", "%d %B %Y"):
             try:
@@ -247,7 +264,10 @@ def parse_date_text(raw, today=None):
 
 def is_old(iso_date, today=None):
     today = today or date.today()
-    return (today - date.fromisoformat(iso_date)).days > OLD_AFTER_DAYS
+    try:
+        return (today - date.fromisoformat(iso_date)).days > OLD_AFTER_DAYS
+    except ValueError:
+        return False
 
 
 def prefer_recent(results, today=None):
@@ -298,27 +318,53 @@ class Store:
         self.path = Path(path)
         self.contacts = {}
         self.searched = {}  # lowercased company name -> date searched
+        self.warning = ""  # a problem with the saved file, for showing to the user
+        self.locked = False  # the file exists but couldn't be read, so don't overwrite it
 
     def load(self):
-        if not self.path.exists():
-            return self
         try:
+            if not self.path.exists():
+                return self
             data = json.loads(self.path.read_text(encoding="utf-8"))
-            self.contacts = {
-                (c["company"], c["phone_key"]): Contact(**c) for c in data["contacts"]
-            }
-            self.searched = data["searched"]
-        except (ValueError, KeyError, TypeError):
+            contacts = {}
+            for fields in data["contacts"]:
+                contact = Contact(**fields)
+                if not (contact.company and contact.phone_key and contact.phone and contact.urls):
+                    continue  # one bad entry shouldn't cost the rest of the list
+                if not parse_date_text(contact.page_date):
+                    contact.page_date = ""
+                contacts[(contact.company, contact.phone_key)] = contact
+            if not isinstance(data["searched"], dict):
+                raise TypeError("searched should be a dictionary")
+            self.contacts, self.searched = contacts, data["searched"]
+        except OSError as error:
+            self.locked = True
+            self.warning = f"Couldn't open your saved results ({error}). Close anything using {self.path.name}, then restart the finder."
+        except (ValueError, KeyError, TypeError, AttributeError):
             # Keep the damaged file for rescue rather than overwriting it later.
-            self.path.replace(self.path.with_name(self.path.name + ".damaged"))
-            self.contacts, self.searched = {}, {}
+            backup = self.path.with_name(self.path.name + ".damaged")
+            try:
+                self.path.replace(backup)
+                self.warning = f"Your saved results were damaged, so this is a fresh list. The old file is kept as {backup.name}."
+            except OSError:
+                self.locked = True
+                self.warning = f"Your saved results in {self.path.name} are damaged and couldn't be moved aside."
         return self
 
     def save(self):
+        if self.locked:
+            raise OSError(f"{self.path.name} couldn't be opened earlier, so it wasn't overwritten")
         data = {"contacts": [asdict(c) for c in self.contacts.values()], "searched": self.searched}
         temporary = self.path.with_name(self.path.name + ".tmp")
         temporary.write_text(json.dumps(data, indent=1), encoding="utf-8")
-        temporary.replace(self.path)  # a crash mid-write can't corrupt the real file
+        for attempt in range(3):
+            try:
+                temporary.replace(self.path)  # a crash mid-write can't corrupt the real file
+                return
+            except PermissionError:  # antivirus or cloud sync can hold the file for a moment
+                if attempt == 2:
+                    raise
+                time.sleep(0.2)
 
     def was_searched(self, name):
         return name.lower() in self.searched
@@ -335,17 +381,43 @@ class Store:
             del self.contacts[key]
 
 
-def search(session, api_key, query):
-    response = session.post(
-        SEARCH_URL,
-        headers={"X-API-KEY": api_key},
-        json={"q": query, "gl": "in", "num": 10},
-        timeout=TIMEOUT,
-    )
+def search(session, api_key, query, retry_delay=RETRY_DELAY):
+    for attempt in range(SEARCH_ATTEMPTS):
+        last_try = attempt == SEARCH_ATTEMPTS - 1
+        try:
+            response = session.post(
+                SEARCH_URL,
+                headers={"X-API-KEY": api_key},
+                json={"q": query, "gl": "in", "num": 10},
+                timeout=TIMEOUT,
+            )
+        except (requests.ConnectionError, requests.Timeout):
+            if last_try:
+                raise
+        else:
+            if response.status_code < 500 or last_try:
+                break
+        time.sleep(retry_delay * 2 ** attempt)
+
     if response.status_code in (401, 402, 403, 429):
         raise SearchStopped(f"search API returned {response.status_code}: {response.text[:200]}")
+    if response.status_code == 400 and "credit" in response.text.lower():
+        raise SearchStopped(f"search API says it's out of credits: {response.text[:200]}")
     response.raise_for_status()
-    return response.json().get("organic", [])
+    data = response.json()
+    results = data.get("organic") if isinstance(data, dict) else None
+    return [r for r in results if isinstance(r, dict)] if isinstance(results, list) else []
+
+
+def describe_search_error(error):
+    """Short wording for the activity log instead of a long technical message."""
+    if isinstance(error, requests.Timeout):
+        return "the search timed out"
+    if isinstance(error, requests.ConnectionError):
+        return "couldn't connect to the search service"
+    if isinstance(error, requests.HTTPError) and error.response is not None:
+        return f"the search service returned an error ({error.response.status_code})"
+    return "the search service sent back something unexpected"
 
 
 class PageReader:
@@ -417,6 +489,7 @@ def collect(companies, city, search_fn, read_fn, do_not_call=frozenset(), log=pr
     """
     contacts = {} if contacts is None else contacts
     emit = on_event or (lambda kind, **details: None)
+    failed_in_a_row = 0
 
     def check_stop():
         if should_stop and should_stop():
@@ -432,22 +505,32 @@ def collect(companies, city, search_fn, read_fn, do_not_call=frozenset(), log=pr
                 check_stop()
                 try:
                     results = search_fn(query)
-                except requests.RequestException as error:
-                    log(f"  search failed: {error}")
-                    emit("search_failed", query=query, error=str(error))
+                except (requests.RequestException, ValueError) as error:
+                    reason = describe_search_error(error)
+                    log(f"  search failed: {reason}")
+                    emit("search_failed", query=query, error=reason)
                     complete = False
+                    failed_in_a_row += 1
+                    if failed_in_a_row >= MAX_FAILED_SEARCHES_IN_A_ROW:
+                        raise SearchStopped("searches keep failing, so check your internet connection")
                     continue
+                failed_in_a_row = 0
                 emit("search", query=query, results=len(results))
                 for result in prefer_recent(results)[:PAGES_PER_QUERY]:
                     check_stop()
                     url = result.get("link", "")
-                    if not url.startswith("http") or url in seen_urls:
+                    if not isinstance(url, str) or not url.startswith("http") or url in seen_urls:
                         continue
                     seen_urls.add(url)
-                    if is_blocked(url):
-                        emit("page", url=url, status="skipped", found=0)
-                        continue
-                    page = read_fn(url)
+                    # One strange page must never end the run, whatever goes wrong with it.
+                    try:
+                        if is_blocked(url):
+                            emit("page", url=url, status="skipped", found=0)
+                            continue
+                        page = read_fn(url)
+                        numbers = extract_numbers(page[1], page[0], company) if page else None
+                    except Exception:
+                        page = None
                     if page is None:
                         emit("page", url=url, status="unreadable", found=0)
                         continue
@@ -456,7 +539,7 @@ def collect(companies, city, search_fn, read_fn, do_not_call=frozenset(), log=pr
                         parsed = parse_date_text(result.get("date"))
                         page_date = parsed.isoformat() if parsed else ""
                     found = set()
-                    for key, display, line_type, agency, name in extract_numbers(page[1], page[0], company):
+                    for key, display, line_type, agency, name in numbers:
                         if key in do_not_call:
                             continue
                         found.add(key)
@@ -535,39 +618,62 @@ def main():
     if not api_key:
         sys.exit("Set the SERPER_API_KEY environment variable first.")
 
-    do_not_call = set()
-    if args.do_not_call:
-        do_not_call = {n for n in map(e164, load_lines(args.do_not_call)) if n}
+    try:
+        do_not_call = set()
+        if args.do_not_call:
+            do_not_call = {n for n in map(e164, load_lines(args.do_not_call)) if n}
+        companies = parse_companies(load_lines(args.companies))
+    except OSError as error:
+        sys.exit(f"Couldn't read your file: {error}")
+    if not companies:
+        sys.exit(f"No companies found in {args.companies}.")
 
     store = Store(args.store).load()
+    if store.warning:
+        print(store.warning)
+    if store.locked:
+        sys.exit(1)
     store.remove_numbers(do_not_call)
-    companies = [parse_company(line) for line in load_lines(args.companies)]
     to_search = [c for c in companies if args.search_again or not store.was_searched(c.name)]
     if len(to_search) < len(companies):
         print(f"Skipping {len(companies) - len(to_search)} already searched (use --search-again to redo)")
+
+    def save_progress():
+        try:
+            store.save()
+        except OSError as error:
+            print(f"Couldn't save progress: {error}")
 
     def on_event(kind, **details):
         if kind == "company_done":
             if details["complete"]:
                 store.mark_searched(details["name"])
-            store.save()
+            save_progress()
+        elif kind in ("search_failed", "stopped"):
+            print("  " + str(details.get("error") or details.get("reason")))
 
     session = requests.Session()
     session.headers["User-Agent"] = USER_AGENT
     reader = PageReader(session)
-    collect(
-        to_search,
-        args.city,
-        lambda query: search(session, api_key, query),
-        reader.read,
-        do_not_call,
-        on_event=on_event,
-        contacts=store.contacts,
-    )
-    store.save()
+    try:
+        collect(
+            to_search,
+            args.city,
+            lambda query: search(session, api_key, query),
+            reader.read,
+            do_not_call,
+            on_event=on_event,
+            contacts=store.contacts,
+        )
+    except KeyboardInterrupt:
+        print("\nStopped. Saving what was found so far.")
+    save_progress()
 
     rows = to_rows(store.contacts)
-    write_csv(args.out, rows)
+    try:
+        write_csv(args.out, rows)
+    except OSError:
+        sys.exit(f"Couldn't write {args.out}. Close it if it's open in Excel, then run this again.")
     found = {row["company"] for row in rows}
     missing = [c.name for c in companies if c.name not in found]
     print(f"\n{len(rows)} numbers for {len(found)} companies -> {args.out}")
