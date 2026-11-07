@@ -70,6 +70,8 @@ Results are saved to `hr_contacts.csv`, which opens in Excel or Google Sheets.
 - **Search credits:** each new company uses 5 searches. Companies already searched are skipped, and **Search again** redoes a single company.
 - **Results are kept between runs:** they're stored in `finder_data.json`, and new numbers are added to the list. Close the finder and delete that file to start over.
 - **Stopped or failed searches:** that company isn't marked as done, so it's searched again next time and uses credits again. Numbers already found are kept.
+- **When something goes wrong:** brief network or search errors are retried, and a page that can't be read is skipped. The run ends early, keeping what it found, if your key is rejected, your credits run out or 6 searches fail in a row. A damaged `finder_data.json` is kept as a backup and a fresh list is started.
+- **If the CSV is open in Excel:** the file can't be updated while it's open, so close it or use **Download CSV**.
 - **Not every company will have a number:** it only finds numbers people or companies have published. Scanned PDFs can't be read.
 - **Names and numbers can be wrong or out of date:** open `source_url` before calling, and start by checking you've reached the right person.
 
